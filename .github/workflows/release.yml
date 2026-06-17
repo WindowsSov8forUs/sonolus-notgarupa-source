@@ -1,0 +1,69 @@
+name: Release source archive
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish, for example v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Fetch LFS files
+        run: git lfs pull
+
+      - name: Verify source directory
+        run: test -d source
+
+      - name: Package source archive
+        run: |
+          set -euo pipefail
+          archive="sonolus-notgarupa-source.tar.gz"
+
+          tar -czf "$archive" source
+          sha256sum "$archive" > "$archive.sha256"
+          split -b 1900M -d -a 3 "$archive" "$archive.part-"
+          sha256sum "$archive".part-* > "$archive.parts.sha256"
+
+          tar -tzf "$archive" | head -n 20
+          gzip -t "$archive"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              sonolus-notgarupa-source.tar.gz.part-* \
+              sonolus-notgarupa-source.tar.gz.sha256 \
+              sonolus-notgarupa-source.tar.gz.parts.sha256 \
+              --clobber
+          else
+            gh release create "$tag" \
+              --title "$tag" \
+              --notes "sonolus-notgarupa source archive for $tag" \
+              sonolus-notgarupa-source.tar.gz.part-* \
+              sonolus-notgarupa-source.tar.gz.sha256 \
+              sonolus-notgarupa-source.tar.gz.parts.sha256
+          fi
